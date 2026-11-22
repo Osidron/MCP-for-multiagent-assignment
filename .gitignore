@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.bergamot/
+.streamlit/secrets.toml
+.env
+*.log
+tmp/
+output/

@@ -1,0 +1,1 @@
+"""Clinical MCP teaching application."""

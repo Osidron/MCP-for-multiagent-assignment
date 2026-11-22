@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "clinical-stdio": {"command": "python", "args": ["-m", "clinical_mcp.server"]},
+    "clinical-network": {"url": "http://127.0.0.1:8000/sse"},
+    "pubmed-remote": {"url": "https://pubmed.mcp.claude.com/mcp"}
+  }
+}
