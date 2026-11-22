@@ -121,6 +121,3 @@ class MatchTests(unittest.TestCase):
         document.assert_not_called()
         self.assertEqual(coordinator.for_fda(FDA).fda, PDF)
         document.assert_called_once_with(FDA)
-
-
-
