@@ -18,4 +18,4 @@
 | Настоящий инспектор | ObservedStream send/receive | тест сверяет id и content с SDK |
 | Одна команда и IDE | run.ps1, .cursor/mcp.json | запуск выполнен |
 | Сдача | README и docs | презентация PDF не требуется |
-| GitHub и Cloud | целевой репозиторий и штатный запуск | фактический статус в verification.md |
+| GitHub и Cloud | целевой репозиторий и публичное приложение | опубликовано; публичный сценарий и все три MCP-варианта проверены, см. verification.md |
