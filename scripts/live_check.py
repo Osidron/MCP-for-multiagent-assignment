@@ -17,15 +17,14 @@ def main():
         called = run("external", "search_articles", {"query": "10.1056/NEJMoa2102953", "max_results": 1})
         print("EXTERNAL CALL", called["ok"], called["duration_ms"], payload(called))
         assert called["ok"] and "34554658" in payload(called).get("pmids", [])
-        drug = run("sse", "search_medications", {"query": "Fortamet"})
-        print("DRUG SEARCH", json.dumps(payload(drug), ensure_ascii=False))
-        data = payload(drug)
-        if data.get("daily", {}).get("items"):
-            selected = data["daily"]["items"][0]
-            result = run("sse", "get_contraindications", {"query": "Fortamet", "source": "DailyMed", "identifier": selected["set_id"]})
-            print("DOCUMENTS", json.dumps(payload(result), ensure_ascii=False))
+        for source, name, args, expected in [
+            ("stdio", "bmi", {"weight_kg":70.0,"height_cm":175.0},22.86),
+            ("sse", "gcs", {"eyes":4,"verbal":5,"motor":6},15),
+        ]:
+            result = run(source, name, args)
+            print(source, result["ok"], payload(result))
+            assert result["ok"] and payload(result).get("value") == expected
         assert external["ok"], external.get("error")
-        assert data["daily"]["state"] == "found"
     finally:
         server.close()
 

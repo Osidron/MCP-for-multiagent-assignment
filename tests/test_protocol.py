@@ -34,7 +34,11 @@ def test_real_sse_and_refused_connection():
         result = run("sse", "gcs", dict(eyes=4, verbal=5, motor=6), f"http://127.0.0.1:{port}/sse")
         assert_trace(result, "gcs")
         assert payload(result)["value"] == 15
-        assert len(result["tools"]) >= 10
+        assert {t["name"] for t in result["tools"]} == {
+            "bmi", "ckd_epi_2021", "cockcroft_gault", "cha2ds2_vasc", "gcs", "list_calculators"
+        }
+        removed = run("sse", "get_contraindications", {}, f"http://127.0.0.1:{port}/sse")
+        assert removed["ok"] and removed["response"]["isError"]
     finally:
         process = server.process
         server.close()

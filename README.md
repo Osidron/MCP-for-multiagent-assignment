@@ -1,110 +1,75 @@
-# Лекарства и клинические инструменты через MCP
+# Клинические инструменты MCP
 
-Практическая работа № 2 курса «Программная инженерия мультиагентных систем клинической медицины». Продолжение первой работы: поиск противопоказаний DailyMed / Drugs@FDA и клинические калькуляторы с тремя настоящими MCP-подключениями. Платный API LLM не требуется. Координатор детерминированный; автономный консилиум LLM не реализуется.
+Учебное приложение практической работы № 2: пять клинических калькуляторов, удалённый PubMed и инспектор JSON-RPC. Все операции инструментов из интерфейса проходят через настоящий MCP. LLM и модели машинного обучения в текущем пайплайне не используются. Платный API модели не требуется.
 
-**[Открыть проверенное приложение Streamlit](https://n9nrqsghaw8zqgfnrx4tku.streamlit.app/).** Все три MCP-подключения проверены через публичный интерфейс; результаты — в [отчёте](docs/verification.md).
+[Открыть приложение](https://n9nrqsghaw8zqgfnrx4tku.streamlit.app/)
 
-## Запуск одной командой
+## Запуск
 
-Python **3.12** (проверено 3.12.14). Первоначальная установка из корня репозитория:
+Python 3.12. Первоначальная установка из корня репозитория:
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
 ```
 
-Дальнейший запуск всей системы:
+После установки: `.\run.ps1`. Альтернатива: `.\.venv\Scripts\python.exe -m streamlit run streamlit_app.py`. Остановка: Ctrl+C. На Linux используйте `.venv/bin/python`.
 
-```powershell
-.\run.ps1
-```
+## Использование
 
-Либо `.\.venv\Scripts\python.exe -m streamlit run streamlit_app.py`. Обычно интерфейс доступен на http://localhost:8501. Остановка: Ctrl+C; управляемый SSE-процесс закрывается через atexit. На Linux используйте `.venv/bin/python`.
-
-Независимый запуск SSE: `python -m clinical_mcp.server --sse --port 8000`. Readiness: `http://127.0.0.1:8000/health`. Подписка `/sse`, POST `/messages/?session_id=...` (завершающий slash соответствует SDK). Stdio: `python -m clinical_mcp.server`; stdout обслуживает только SDK, логи направлены в stderr.
+Выберите MCP-источник и нажмите «Обнаружить инструменты (tools/list)». Отфильтруйте каталог по направлению или русскому/английскому названию. Заполните форму, проверьте единицы и подтвердите данные. Нажмите «Выполнить»: Host покажет значение, компоненты, ограничения и источник. Снятый флажок означает «нет» только после явного подтверждения пользователем. Внизу раскрывается инспектор реального обмена.
 
 ## Архитектура
 
 ```mermaid
 flowchart LR
-  H[Streamlit MCP Host] --> C[Клиентский роутер и инспектор]
-  C -->|stdin/stdout| S[Дочерний stdio MCP]
-  C -->|HTTP SSE| N[Независимый SSE процесс :8000]
-  C -->|TLS Streamable HTTP| E[Удалённый PubMed MCP Anthropic]
-  S --> F[Общие формулы и Pydantic]
-  N --> F
-  N --> D[Координатор лекарственного поиска]
-  D --> A[DailyMed]
-  D --> B[Drugs@FDA]
+ H[Streamlit Host] --> C[MCP Client и инспектор]
+ C -->|stdin/stdout| S[Дочерний stdio процесс]
+ C -->|SSE /sse и POST /messages/| N[Отдельный SSE процесс :8000]
+ C -->|HTTPS Streamable HTTP| E[Удалённый PubMed MCP]
+ S --> F[Общие формулы Python и Pydantic]
+ N --> F
 ```
 
-Host отвечает за формы и сеанс. Client выполняет initialize, notifications/initialized, tools/list с пагинацией и tools/call. Server валидирует параметры и считает кодом. Координатор параллельно ищет кандидатов и сопоставляет состав, форму, путь введения и заявку FDA. Интерфейс не импортирует формулы или лекарственные адаптеры.
-
-| Подключение | Адрес / процесс | Инструменты | Жизненный цикл |
-|---|---|---|---|
-| stdio | дочерний Python на узле Host | 3 расчёта и каталог | процесс на операцию, закрытие контекстом SDK |
-| локальный SSE | 127.0.0.1:8000/sse | 5 расчётов, каталог, 4 лекарственных инструмента | cache_resource, lock, readiness, atexit |
-| внешний | https://pubmed.mcp.claude.com/mcp | фактический tools/list, search_articles, get_article_metadata и другие | общий deadline 12 с, TTL 300 с в текущем сеансе |
-
-SSE допускает 2 попытки в общем бюджете. Для внешнего сервиса одна попытка. Локальные расчёты ограничены 15 с, загрузка инструкций — 75 с. Каждый вызов UI проходит MCP. Закрытие сессий предусмотрено SDK; вымышленный JSON-RPC метод shutdown не посылается.
-
-Инспектор прозрачно наблюдает SDK SessionMessage на send/receive, а не собирает запрос из формы. Показывает направление, id, ответ, источник, инструмент и время. Это нормализованная SDK JSON-модель, не побайтовый сетевой дамп. История ограничена 8 операциями по 80 сообщений, только в памяти текущего сеанса; заголовки HTTP не собираются, поля секретов редактируются. Попадание в кэш не создаёт фиктивного нового обмена.
-
-## Методики и контракты
-
-| MCP tool | Метод / результат | Источник |
+| Вариант | Инструменты | Жизненный цикл |
 |---|---|---|
-| bmi | фактическая масса кг / рост м² | [CDC](https://www.cdc.gov/growth-chart-training/hcp/using-bmi/calculating-bmi.html) |
-| ckd_epi_2021 | CKD-EPI 2021 creatinine, без расового коэффициента, мл/мин/1.73 м² | [Inker 2021](https://doi.org/10.1056/NEJMoa2102953), [NKF implementation](https://www.kidney.org/recommendations-implementing-ckd-epi-2021-race-free-egfr-calculation-guidelines-clinical) |
-| cockcroft_gault | Cockcroft–Gault 1976, фактическая масса, мл/мин | [Первичная публикация](https://pubmed.ncbi.nlm.nih.gov/1244564/) |
-| cha2ds2_vasc | Lip 2010, 0–9, компоненты C/H/A/D/S/V/Sc | [Первичная публикация](https://pubmed.ncbi.nlm.nih.gov/19762550/) |
-| gcs | структурированная E+V+M, 3–15 | [Glasgow assessment aid](https://www.glasgowcomascale.org/downloads/GCS-Assessment-Aid-English.pdf?v=2) |
-| list_calculators | схемы, единицы, диапазоны, ограничения, источники | метаданные общих методов |
-| search_medications | query ru/en → английский query и выдачи daily/fda | координатор первой работы |
-| search_dailymed / search_fda | query → items, state, truncated | [DailyMed API](https://dailymed.nlm.nih.gov/dailymed/app-support-web-services.cfm), [FDA API](https://open.fda.gov/apis/drug/drugsfda/) |
-| get_contraindications | query/source/identifier/product_name/product_index → документы, версии, ссылки, fda_match | выбранный SPL / FDA PDF |
+| 1 stdio | BMI, CKD-EPI, Cockcroft–Gault, каталог | SDK запускает процесс на операцию и закрывает каналы |
+| 2 SSE | пять калькуляторов и каталог, всего 6 | отдельный процесс, readiness /health, cache_resource и lock |
+| 3 внешний | фактический каталог PubMed MCP, в проверке 7 | удалённый HTTPS endpoint, deadline 12 с, TTL 300 с |
 
-CKD-EPI: `142 × min(Scr/k,1)^alpha × max(Scr/k,1)^−1.200 × 0.9938^age × 1.012 [female]`; k=0.7/0.9, alpha=−0.241/−0.302. Scr mg/dL; umol/L делится на 88.4. Cockcroft: `(140−age) × weight / (72 × Scr) × 0.85 [female]`. Клиренс не индексирован и не равен СКФ.
+Серверы: `python -m clinical_mcp.server` и `python -m clinical_mcp.server --sse --port 8000`. Сетевые маршруты: GET /sse, POST /messages/?session_id=…, GET /health. Общие формулы находятся в одном модуле. В облаке оба локальных процесса работают на узле Streamlit, а не на компьютере пользователя.
 
-Схемы содержат технические защитные диапазоны, не подтверждение клинической применимости. Почечные формулы только ≥18 лет и при стабильном креатинине; ограничения при ОПП, беременности, диализе и необычной мышечной массе. Cockcroft использует фактическую массу; исходная выборка 18–92 лет, ожирение и отёки ограничивают применимость. Для GCS при NT сумму не считают. CHA2DS2-VASc — историческая версия 2010, не CHA2DS2-VA; проценты риска и назначения не выводятся.
+ClientSession официального mcp==2.3.0 выполняет initialize, notifications/initialized, tools/list с пагинацией и tools/call. Проверенный протокол — 2025-11-25. Версия SDK 2.3.0 доступна и удовлетворяет указаниям PDF 2.x и >=1.3.0. [Официальные исходники](https://github.com/modelcontextprotocol/python-sdk/tree/v2.3.0).
 
-Формы строятся из фактического JSON Schema tools/list: number_input, enum, checkbox, текст, JSON для массивов. Обязательные поля помечены *. Измерения изначально пустые; флажки требуют подтверждения, что снятый означает «нет». Sanitizer обрабатывает пробелы, запятую и допустимые типы без подстановки отсутствующих измерений и угадывания единиц. Цветовой шкалы риска нет: нейтральная карточка, компоненты, справочная интерпретация и источник — согласно уточнению пользователя к PDF. Персональных назначений и автоматического разрешения препарата нет.
+Для локальных операций общий бюджет 15 с, SSE допускает две попытки. Для внешних — 12 с и одна попытка. Контекстные менеджеры закрывают сессии. Диагностика stdio направляется в stderr. Ошибки инструмента возвращаются структурированно с isError.
 
-## Первая работа
+## Методики
 
-`drug_search/` скопирован без изменения исходного репозитория первой работы. Сохранены Bergamot WASM, SPL-коды 34070-3/50570-1, разбор FDA PDF, выбор кандидата до загрузки документа, сопоставление формы/пути/состава/заявки и ссылки на версии. Для FDA повторная выдача сверяется по индексу, заявке и имени; при изменении списка требуется повторный выбор. Ограничения выдачи: 40 SPL и 30 заявок. Историческая инструкция не считается актуальной автоматически. Первый русский запрос скачивает проверенные SHA-256 ресурсы Mozilla в игнорируемую `.bergamot/`.
+| Инструмент | Версия и результат | Источник |
+|---|---|---|
+| bmi | кг/м², фактическая масса и рост | [CDC](https://www.cdc.gov/growth-chart-training/hcp/using-bmi/calculating-bmi.html) |
+| ckd_epi_2021 | креатинин, без расового коэффициента, мл/мин/1.73 м² | [Inker 2021](https://doi.org/10.1056/NEJMoa2102953) |
+| cockcroft_gault | 1976, фактическая масса, мл/мин | [Первичная публикация](https://pubmed.ncbi.nlm.nih.gov/1244564/) |
+| cha2ds2_vasc | Lip 2010, 0–9 баллов | [Первичная публикация](https://pubmed.ncbi.nlm.nih.gov/19762550/) |
+| gcs | E+V+M, 3–15 баллов | [Glasgow assessment aid](https://www.glasgowcomascale.org/downloads/GCS-Assessment-Aid-English.pdf?v=2) |
+| list_calculators | JSON Schema, диапазоны, единицы и ограничения | метаданные общих методов |
 
-## Версии SDK и Python
+Почечные формулы для взрослых при стабильном креатинине; ограничения при ОПП, беременности, диализе и необычной мышечной массе. Креатинин umol/L делится на 88.4 для mg/dL. СКФ индексирована, клиренс Cockcroft не индексирован. При NT в GCS сумму не считают. CHA₂DS₂-VASc — версия 2010, не CHA₂DS₂-VA. Технические диапазоны не доказывают применимость формулы к пациенту. Интерпретация нейтральная, без произвольных цветов риска и персональных назначений.
 
-На 22.11.2026 `pip index versions mcp` подтвердил **2.3.0**; установлен официальный `mcp==2.3.0`. Это удовлетворяет обоим указаниям PDF: 2.x и >=1.3.0. Проверены [исходники тега v2.3.0](https://github.com/modelcontextprotocol/python-sdk/tree/v2.3.0) и [миграция](https://py.sdk.modelcontextprotocol.io/migration/). Использован Server с on_list_tools/on_call_tool, не устаревшие декораторы FastMCP v1. SseServerTransport поддерживает буквальное SSE-требование. Согласованный протокол в проверках — 2025-11-25; версия SDK и протокола различаются.
+Sanitizer обрабатывает пробелы, десятичную запятую и допустимые типы, не подставляя отсутствующие измерения. Формы строятся по фактическому tools/list: числа, enum, checkbox, строки, JSON для массивов/объектов.
 
-Зависимости закреплены в requirements.txt. Полный снимок Windows — requirements-lock-windows.txt (содержит pywin32; не устанавливать целиком на Linux). Для облака переносимый requirements.txt. Выбран Python 3.12, совместимый с исходной первой работой и [Community Cloud](https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/deploy).
+ObservedStream наблюдает реальные SDK SessionMessage на send/receive. Это нормализованная JSON-модель на границе транспорта, не заново собранный запрос. История: 8 операций по 80 сообщений в памяти сеанса. Заголовки не собираются, секретные поля редактируются. Кэш не создаёт фиктивного обмена.
 
 ## Внешний сервис и настройки
 
-[Документация владельца PubMed-коннектора](https://academy.claude.com/tutorials/using-the-pubmed-connector-in-claude) указывает endpoint. initialize/list/search/metadata фактически работали без ключа и оплаты; это наблюдение текущего доступа, не гарантия SLA или будущих условий. Права на статьи определяет издатель. Сервер действительно удалённый, REST-адаптер не выдаётся за внешнюю MCP-интеграцию.
+Endpoint: https://pubmed.mcp.claude.com/mcp. [Документация владельца](https://academy.claude.com/tutorials/using-the-pubmed-connector-in-claude). Доступ при проверке не требовал ключа или оплаты. Внутренние AI-модели сервиса не установлены по клиентскому коду. Приложение не вызывает LLM для поиска, расчётов или координации.
 
-| Env | Значение по умолчанию | Назначение |
-|---|---|---|
-| MCP_AUTO_START | 1 | 0 для ручного запуска и демонстрации отказа SSE |
-| LOCAL_MCP_URL | http://127.0.0.1:8000/sse | сетевой клиент |
-| EXTERNAL_MCP_URL | https://pubmed.mcp.claude.com/mcp | удалённый Streamable HTTP |
-| EXTERNAL_MCP_TOKEN | отсутствует | необязательный Bearer из env или верхнего уровня Streamlit Secrets |
+Env: MCP_AUTO_START=1 (0 для ручного запуска SSE); LOCAL_MCP_URL=http://127.0.0.1:8000/sse; EXTERNAL_MCP_URL — замена удалённого Streamable HTTP endpoint; EXTERNAL_MCP_TOKEN — необязательный Bearer из env или Streamlit Secrets. Не сохраняйте секреты в коде. Кэш внешних результатов действует 300 с в текущем сеансе, до 20 записей.
 
-`.cursor/mcp.json` рассчитан на IDE из корня репозитория и активированную .venv. При другом cwd задайте абсолютный command/cwd по настройкам IDE. Секреты в конфиг не добавлять.
+## Проверки и облако
 
-## Проверки и материалы сдачи
+`python -m pytest -q`, `python -m pip check`, `python scripts/live_check.py`. Последний сценарий требует Интернет. Тесты используют реальные stdio/SSE, проверяют расчёты, валидацию, отсутствие удалённых инструментов, отказ сервера и UI. Полный Windows-снимок зависимостей — requirements-lock-windows.txt, для Linux используйте requirements.txt.
 
-```powershell
-.\.venv\Scripts\python.exe -m pytest -q
-.\.venv\Scripts\python.exe -m pip check
-.\.venv\Scripts\python.exe scripts/live_check.py
-```
+Community Cloud: main, streamlit_app.py, Python 3.12. Supervisor управляет локальным SSE-процессом в облачном окружении. Фактический статус проверок — [verification.md](docs/verification.md). [Сценарий защиты](docs/defense.md), [матрица требований](docs/requirements.md).
 
-Автономные тесты используют настоящие локальные транспорты. live_check требует Интернет. Регрессионные проверки разбора/сопоставления используют моки источников отдельно от живых соединений. [Отчёт](docs/verification.md), [защита и контрольные вопросы](docs/defense.md), [матрица требований](docs/requirements.md).
-
-## Community Cloud
-
-Новое приложение: этот репозиторий, main, `streamlit_app.py`, Python 3.12. [Процедура](https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/deploy). Секреты для проверенного PubMed не требуются. Loopback SSE относится к контейнеру Streamlit: Host запускает там отдельный процесс; адрес компьютера пользователя не используется. Supervisor предотвращает повторный запуск при rerun, проверяет readiness, перезапускает умерший процесс и завершает только свой процесс. Stdio запускается на том же узле через SDK. Порт SSE не публикуется наружу.
-
-Приложение создано владельцем аккаунта Streamlit и проверено по публичному URL: stdio, локальный SSE в облачном окружении, внешний PubMed, русский поиск, DailyMed и FDA, динамические формы, неверный ввод и инспектор. Фактический статус — в docs/verification.md. Возможны cold start, лимиты ресурсов и изменения доступности внешних источников.
+Текущая версия по запросу пользователя содержит только клинические инструменты и PubMed. Первый проект в соседнем репозитории не изменён. Материалы и проверки прежнего лекарственного сценария доступны в истории Git.

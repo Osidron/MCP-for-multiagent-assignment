@@ -70,7 +70,7 @@ class ObservedStream:
 
 async def exchange(source, tool=None, arguments=None, url=None):
     start, history = time.monotonic(), []
-    budget = 12 if source == "external" else (75 if tool and ("search" in tool or tool == "get_contraindications") else 15)
+    budget = 12 if source == "external" else 15
     attempts = 2 if source == "sse" else 1
     result = {"ok": False, "source": source, "tool": tool, "history": history}
     try:
